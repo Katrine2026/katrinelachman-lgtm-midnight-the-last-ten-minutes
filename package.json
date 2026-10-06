@@ -1,0 +1,14 @@
+{
+  "name": "midnight-the-last-ten-minutes",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "pnpm --filter @midnight/shared build && pnpm --parallel --filter @midnight/server --filter @midnight/client dev",
+    "dev:server": "pnpm --filter @midnight/shared build && pnpm --filter @midnight/server dev",
+    "dev:client": "pnpm --filter @midnight/shared build && pnpm --filter @midnight/client dev",
+    "build": "pnpm -r build",
+    "start": "pnpm --filter @midnight/server start",
+    "smoke": "pnpm --filter @midnight/client smoke"
+  }
+}

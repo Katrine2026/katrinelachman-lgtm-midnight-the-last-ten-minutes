@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: midnight-the-last-ten-minutes
+    runtime: node
+    plan: free
+    numInstances: 1
+    buildCommand: pnpm install --frozen-lockfile --prod=false && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
