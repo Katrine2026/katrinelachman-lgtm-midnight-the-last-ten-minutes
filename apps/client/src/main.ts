@@ -237,7 +237,8 @@ function enterRoom(room: GameRoom): void {
 function syncRoomState(state: GameRoom["state"]): void {
   if (!activeRoom) return;
   const isHost = activeRoom.sessionId === state.hostSessionId;
-  const count = state.players.size;
+  const players = state.players;
+  const count = players?.size ?? 0;
   byId<HTMLElement>("player-count").textContent = `${count} / ${MAX_PLAYERS}`;
   byId<HTMLElement>("game-player-count").textContent = `${count} / ${MAX_PLAYERS}`;
   roomCodeDisplay.textContent = activeRoom.roomId;
@@ -249,7 +250,7 @@ function syncRoomState(state: GameRoom["state"]): void {
       : "The host can start whenever the group is ready.";
   startButton.classList.toggle("hidden", !isHost);
   startButton.disabled = !isHost || count < MIN_PLAYERS || state.phase !== "lobby";
-  renderPlayers(state.players, activeRoom.sessionId);
+  renderPlayers(players, activeRoom.sessionId);
   renderGameStatus(state);
 
   if (state.phase !== lastPhase) {
@@ -262,8 +263,8 @@ function syncRoomState(state: GameRoom["state"]): void {
   }
 }
 
-function renderPlayers(players: GameRoom["state"]["players"], localSessionId: string): void {
-  const entries = [...players.entries()];
+function renderPlayers(players: GameRoom["state"]["players"] | undefined, localSessionId: string): void {
+  const entries = [...(players?.entries() ?? [])];
   playerList.replaceChildren(...entries.map(([sessionId, player], index) => {
     const item = document.createElement("li");
     item.className = "player-row";
