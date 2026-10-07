@@ -1,4 +1,5 @@
 import type Phaser from "phaser";
+import { HotelAudio } from "./hotel-audio.js";
 import { Client, type Room } from "@colyseus/sdk";
 import { MAX_PLAYERS, MIN_PLAYERS } from "@midnight/shared";
 import type { HotelScene as HotelSceneType } from "./hotel-scene.js";
@@ -32,7 +33,7 @@ app.innerHTML = `
   <main class="shell">
     <header class="masthead">
       <a class="wordmark" href="#home" aria-label="Midnight home"><span class="wordmark-mark">M</span><span>MIDNIGHT<small>THE LAST TEN MINUTES</small></span></a>
-      <div class="masthead-status"><span class="status-light"></span><span id="connection-label">AWAITING GUESTS</span></div>
+      <div class="masthead-tools"><button id="audio-toggle" class="audio-toggle" type="button" aria-label="Mute game audio" aria-pressed="true">♫ SOUND ON</button><div class="masthead-status"><span class="status-light"></span><span id="connection-label">AWAITING GUESTS</span></div></div>
     </header>
 
     <section id="landing-screen" class="landing-screen">
@@ -62,6 +63,7 @@ app.innerHTML = `
 
     <section id="lobby-screen" class="lobby-screen hidden" aria-labelledby="lobby-heading">
       <div class="section-heading"><div><p class="eyebrow">THE FRONT DESK</p><h2 id="lobby-heading">Gather your party.</h2></div><button id="leave-lobby" class="text-button">LEAVE ROOM <span>↗</span></button></div>
+      <aside id="opening-prologue" class="prologue-panel hidden" aria-labelledby="prologue-title"><div class="prologue-seal" aria-hidden="true">M</div><div class="prologue-copy"><p class="card-kicker">THE MERIDIAN · 12:01 AM</p><h3 id="prologue-title">Forty years since the doors closed.</h3><p>Tonight, the elevator opened onto an empty lobby. The guest ledger contradicts the portrait; the portrait points east; a maintenance note warns that three records release the brass key.</p><p>Find what the hotel hid, reach the emergency exit, and leave together before midnight.</p></div><button id="skip-prologue" class="prologue-skip" type="button">SKIP OPENING <span aria-hidden="true">↗</span></button></aside>
       <div class="lobby-layout">
         <div class="lobby-card guests-card"><div class="card-heading"><div><span class="card-kicker">GUEST REGISTER</span><h3>In the lobby <span id="player-count">0 / 8</span></h3></div><span class="register-icon">✧</span></div><ul id="player-list" class="player-list"></ul><p id="lobby-hint" class="lobby-hint">Waiting for another guest to arrive…</p></div>
         <div class="lobby-card room-card"><span class="card-kicker">INVITE YOUR FRIENDS</span><p class="room-code-label">ROOM CODE</p><div class="room-code" id="room-code-display">——————</div><button id="copy-code" class="copy-button">COPY CODE</button><div class="lobby-divider"></div><div class="ready-row"><span class="ready-lamp"></span><span id="host-note">Only the host can begin</span></div><button id="start-button" class="button button-primary start-button" disabled><span>START THE NIGHT</span><span class="button-arrow">✦</span></button><p class="minimum-note">At least 2 guests · Up to 8</p></div>
@@ -73,7 +75,7 @@ app.innerHTML = `
       <div class="game-topbar">
         <div class="game-brand"><span class="mini-moon">☾</span><span>THE MERIDIAN <small>AFTER HOURS</small></span></div>
         <div class="objective-pill"><span class="objective-spark">✦</span><span>Find the clues. Find the key. Unlock the emergency exit. Escape before midnight.</span></div>
-        <div class="timer-card" aria-live="polite"><span class="timer-label">UNTIL MIDNIGHT</span><strong id="timer">10:00</strong></div>
+        <div id="timer-card" class="timer-card" aria-live="polite"><span class="timer-label">UNTIL MIDNIGHT</span><strong id="timer">10:00</strong></div>
         <button id="leave-game" class="icon-button" aria-label="Leave game" title="Leave game">↗</button>
       </div>
       <div class="game-layout">
@@ -95,6 +97,7 @@ app.innerHTML = `
     <div id="result-overlay" class="result-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="result-title">
       <div class="result-card"><div id="result-symbol" class="result-symbol">✦</div><p id="result-kicker" class="eyebrow">THE NIGHT IS YOURS</p><h2 id="result-title">YOU ESCAPED</h2><p id="result-copy">Together, you made it out before midnight.</p><div class="result-rule"><span></span>✧<span></span></div><button id="return-home" class="button button-primary"><span>RETURN TO THE LOBBY</span><span class="button-arrow">↗</span></button></div>
     </div>
+    <div id="moment-overlay" class="moment-overlay" aria-hidden="true"></div>
   </main>
 `;
 
@@ -119,6 +122,11 @@ const actionButton = byId<HTMLButtonElement>("action-button");
 const timer = byId<HTMLElement>("timer");
 const resultOverlay = byId<HTMLElement>("result-overlay");
 const clueList = byId<HTMLUListElement>("clue-list");
+const audio = new HotelAudio();
+const audioToggle = byId<HTMLButtonElement>("audio-toggle");
+const openingPrologue = byId<HTMLElement>("opening-prologue");
+let momentTimer = 0;
+let presentationSnapshot: PresentationSnapshot | null = null;
 
 let activeRoom: GameRoom | null = null;
 let game: Phaser.Game | null = null;
@@ -127,6 +135,13 @@ let toastTimer = 0;
 let lastPhase: Phase | null = null;
 const receivedClues = new Map<string, string>();
 
+renderAudioControl();
+audioToggle.addEventListener("click", () => {
+  audio.setMuted(!audio.isMuted);
+  if (!audio.isMuted && activeRoom) audio.unlockFromGesture();
+  renderAudioControl();
+});
+byId<HTMLButtonElement>("skip-prologue").addEventListener("click", hidePrologue);
 byId<HTMLInputElement>("player-name").value = localStorage.getItem("midnight-player-name") ?? "";
 
 byId<HTMLButtonElement>("create-button").addEventListener("click", () => void createRoom());
@@ -185,6 +200,7 @@ function currentPlayerName(): string {
 async function createRoom(): Promise<void> {
   const name = currentPlayerName();
   if (!name) return;
+  audio.unlockFromGesture();
   setEntryBusy(true);
   try {
     const room = await client.create("midnight", { name });
@@ -205,6 +221,7 @@ async function joinRoom(): Promise<void> {
     roomCodeInput.focus();
     return;
   }
+  audio.unlockFromGesture();
   setEntryBusy(true);
   try {
     const room = await client.joinById(code, { name });
@@ -219,14 +236,23 @@ async function joinRoom(): Promise<void> {
 function enterRoom(room: GameRoom): void {
   activeRoom = room;
   lastPhase = null;
+  presentationSnapshot = capturePresentation(room.state);
   receivedClues.clear();
+  showPrologue();
   showEntryError("");
   roomCodeDisplay.textContent = room.roomId;
   room.onStateChange((state) => syncRoomState(state));
   room.onMessage("notice", (message: Notice) => showToast(message.text, message.tone));
   room.onMessage("clue", (message: ClueMessage) => {
-    if (message.text) receivedClues.set(message.id, message.text);
-    renderClues();
+    if (message.text) {
+      receivedClues.set(message.id, message.text);
+      renderClues();
+      audio.playClueFound();
+      pulseMoment("clue");
+      const newestClue = clueList.lastElementChild;
+      newestClue?.classList.add("clue-arrival");
+      window.setTimeout(() => newestClue?.classList.remove("clue-arrival"), 1500);
+    }
   });
   connectionLabel.textContent = "CONNECTED TO THE MERIDIAN";
   connectionLabel.parentElement?.classList.add("is-connected");
@@ -236,6 +262,7 @@ function enterRoom(room: GameRoom): void {
 
 function syncRoomState(state: GameRoom["state"]): void {
   if (!activeRoom) return;
+  presentRoomChanges(state);
   const isHost = activeRoom.sessionId === state.hostSessionId;
   const players = state.players;
   const count = players?.size ?? 0;
@@ -298,14 +325,26 @@ function renderPlayers(players: GameRoom["state"]["players"] | undefined, localS
 }
 
 function renderGameStatus(state: GameRoom["state"]): void {
-  timer.textContent = formatTime(Math.max(0, state.remainingSeconds));
+  const secondsRemaining = Math.max(0, state.remainingSeconds);
+  timer.textContent = formatTime(secondsRemaining);
+  const timerCard = byId<HTMLElement>("timer-card");
+  const finalCountdown = state.phase === "playing" && secondsRemaining > 0 && secondsRemaining <= 10;
+  timerCard.classList.toggle("is-warning", secondsRemaining > 60 && secondsRemaining <= 120);
+  timerCard.classList.toggle("is-critical", secondsRemaining > 0 && secondsRemaining <= 60);
+  timerCard.classList.toggle("is-final", finalCountdown);
+  gameScreen.classList.toggle("is-final-countdown", finalCountdown);
+  audio.setCountdownPressure(state.phase === "playing" ? secondsRemaining : 600);
   byId<HTMLElement>("clue-count").textContent = `${state.cluesFound} / 3`;
-  byId<HTMLElement>("progress-fill").style.width = `${Math.min(100, state.cluesFound / 3 * 100)}%`;
+  const progressFill = byId<HTMLElement>("progress-fill");
+  progressFill.style.width = `${Math.min(100, state.cluesFound / 3 * 100)}%`;
+  progressFill.closest(".objective-progress")?.classList.toggle("is-complete", state.cluesFound >= 3);
   byId<HTMLElement>("key-status").textContent = state.keyFound ? "Brass key found" : "Brass key";
   byId<HTMLElement>("exit-status").textContent = state.keyFound ? "The way is open" : "Still locked";
   byId<HTMLElement>("exit-detail").textContent = state.exitUnlocked ? "Unlocked — make your escape" : "Down the main hall";
   byId<HTMLElement>("key-status-icon").classList.toggle("complete", state.keyFound);
   byId<HTMLElement>("exit-status-icon").classList.toggle("complete", state.exitUnlocked);
+  byId<HTMLElement>("key-status-icon").closest(".escape-status")?.classList.toggle("is-complete", state.keyFound);
+  byId<HTMLElement>("exit-status-icon").closest(".escape-status")?.classList.toggle("is-complete", state.exitUnlocked);
   renderClues();
   if (scene) scene.setRoom(activeRoom, activeRoom?.sessionId ?? "");
 }
@@ -355,12 +394,94 @@ async function mountGame(): Promise<void> {
     scene: [],
   });
   scene = new HotelScene(activeRoom, activeRoom.sessionId);
+  scene.setFootstepCallback(() => audio.playFootstep());
   game.scene.add("HotelScene", scene, true);
   scene.onNearbyTargetChange((target) => {
     actionButton.disabled = !target || activeRoom?.state.phase !== "playing";
     actionButton.textContent = target ? `${target.verb} · ${target.label}` : "WALK TO A GLOWING OBJECT";
     actionButton.classList.toggle("is-ready", Boolean(target));
   });
+}
+
+function renderAudioControl(): void {
+  audioToggle.textContent = audio.isMuted ? "♫ SOUND OFF" : "♫ SOUND ON";
+  audioToggle.setAttribute("aria-pressed", String(!audio.isMuted));
+  audioToggle.setAttribute("aria-label", audio.isMuted ? "Unmute game audio" : "Mute game audio");
+  audioToggle.title = audio.isMuted ? "Turn hotel sounds on" : "Turn hotel sounds off";
+}
+
+function showPrologue(): void {
+  openingPrologue.classList.remove("hidden");
+  openingPrologue.classList.remove("is-arriving");
+  void openingPrologue.offsetWidth;
+  openingPrologue.classList.add("is-arriving");
+}
+
+function hidePrologue(): void {
+  openingPrologue.classList.add("hidden");
+  openingPrologue.classList.remove("is-arriving");
+}
+
+function pulseMoment(moment: "start" | "clue" | "key" | "exit" | "escape" | "win" | "loss"): void {
+  const overlay = byId<HTMLElement>("moment-overlay");
+  overlay.className = "moment-overlay";
+  void overlay.offsetWidth;
+  overlay.classList.add("moment-" + moment);
+  overlay.classList.add("is-active");
+  window.clearTimeout(momentTimer);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  momentTimer = window.setTimeout(() => { overlay.className = "moment-overlay"; }, reducedMotion ? 180 : 1050);
+}
+
+interface PresentationSnapshot {
+  phase: Phase;
+  cluesFound: number;
+  keyFound: boolean;
+  exitUnlocked: boolean;
+  escapedPlayers: Set<string>;
+}
+
+function capturePresentation(state: GameRoom["state"]): PresentationSnapshot {
+  return {
+    phase: state.phase,
+    cluesFound: state.cluesFound,
+    keyFound: state.keyFound,
+    exitUnlocked: state.exitUnlocked,
+    escapedPlayers: new Set([...(state.players?.entries() ?? [])].filter(([, player]) => player.escaped).map(([id]) => id)),
+  };
+}
+
+function presentRoomChanges(state: GameRoom["state"]): void {
+  const previous = presentationSnapshot;
+  presentationSnapshot = capturePresentation(state);
+  if (!previous) return;
+
+  if (previous.phase === "lobby" && state.phase === "playing") {
+    hidePrologue();
+    audio.playElevatorClose();
+    pulseMoment("start");
+  }
+  if (!previous.keyFound && state.keyFound) {
+    audio.playKeyFound();
+    pulseMoment("key");
+  }
+  if (!previous.exitUnlocked && state.exitUnlocked) {
+    audio.playExitUnlocked();
+    pulseMoment("exit");
+  }
+  if (state.phase === "lost" && previous.phase !== "lost") {
+    audio.playTimeout();
+    pulseMoment("loss");
+  } else if (state.phase === "won" && previous.phase !== "won") {
+    audio.playWin();
+    pulseMoment("win");
+  } else {
+    const newEscape = [...(state.players?.entries() ?? [])].some(([id, player]) => player.escaped && !previous.escapedPlayers.has(id));
+    if (newEscape) {
+      audio.playEscape();
+      pulseMoment("escape");
+    }
+  }
 }
 
 function showScreen(screen: "landing" | "lobby" | "game"): void {
@@ -374,7 +495,11 @@ async function leaveRoom(): Promise<void> {
   activeRoom = null;
   scene = null;
   lastPhase = null;
+  presentationSnapshot = null;
   receivedClues.clear();
+  hidePrologue();
+  audio.stopAmbience();
+  gameScreen.classList.remove("is-final-countdown");
   resultOverlay.classList.add("hidden");
   actionButton.disabled = true;
   if (game) {
@@ -397,11 +522,14 @@ function showResult(phase: "won" | "lost"): void {
     ? "Together, you made it out before midnight."
     : "The clock reached twelve. The hotel doors have closed.";
   resultOverlay.classList.remove("hidden");
+  resultOverlay.classList.toggle("result-win", won);
   resultOverlay.classList.toggle("result-loss", !won);
 }
 
 function showToast(text: string, tone = "story"): void {
   const toast = byId<HTMLElement>("toast");
+  toast.classList.remove("visible");
+  void toast.offsetWidth;
   toast.textContent = text;
   toast.dataset.tone = tone;
   toast.classList.add("visible");
