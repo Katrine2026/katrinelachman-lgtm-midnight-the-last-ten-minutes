@@ -26,6 +26,26 @@ type GameRoom = Room & {
   leave(): Promise<void>;
 };
 
+const CASE_CLUES = [
+  {
+    id: "guest-ledger",
+    title: "The Guest Ledger",
+    location: "ROOM 101 · BLUE SUITE",
+    story: "A late-night entry appears forty years after the hotel sealed its doors. Its margin points to the portrait.",
+  },
+  {
+    id: "dusty-portrait",
+    title: "The Portrait Inscription",
+    location: "ROOM 102 · VIOLET SUITE",
+    story: "The inscription sends the search east, toward what the mirror cannot show.",
+  },
+  {
+    id: "maintenance-note",
+    title: "The Maintenance Note",
+    location: "ROOM 103 · ORCHID SUITE",
+    story: "Three records are needed to release the brass key from Security.",
+  },
+] as const;
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("The MIDNIGHT game container is missing.");
 
@@ -81,12 +101,28 @@ app.innerHTML = `
       <div class="game-layout">
         <div class="scene-column">
           <div class="map-frame"><div class="map-topline"><span>✦ FLOOR 01</span><span>MERIDIAN HOTEL · 12:01 AM</span><span>✦</span></div><div id="game-canvas" class="game-canvas"></div><div class="map-bottomline"><span><i class="legend-dot yours"></i> YOU</span><span><i class="legend-dot friend"></i> YOUR PARTY</span><span><i class="legend-dot searchable"></i> SEARCH HERE</span></div></div>
+          <aside id="investigation-panel" class="investigation-panel hidden" aria-label="New investigation evidence" aria-live="polite" aria-atomic="true">
+            <button id="dismiss-investigation" class="investigation-dismiss" type="button" aria-label="Dismiss investigation panel">×</button>
+            <div class="investigation-meta"><span id="investigation-index">NEW EVIDENCE</span><span id="investigation-location"></span></div>
+            <h3 id="investigation-title"></h3>
+            <p id="investigation-story" class="investigation-story"></p>
+            <div class="investigation-proof"><span>RECOVERED NOTE</span><p id="investigation-evidence"></p></div>
+            <span class="investigation-filed">ADDED TO THE SHARED CASE FILE</span>
+          </aside>
           <div class="touch-controls" aria-label="Movement controls"><span class="control-hint">MOVE</span><div class="direction-pad"><button class="direction-button up" data-direction="up" aria-label="Move up">▲</button><button class="direction-button left" data-direction="left" aria-label="Move left">◀</button><button class="direction-button down" data-direction="down" aria-label="Move down">▼</button><button class="direction-button right" data-direction="right" aria-label="Move right">▶</button></div><span class="control-hint">WASD / ARROWS</span><button id="action-button" class="button action-button" disabled>WALK TO A GLOWING OBJECT</button></div>
           <div id="toast" class="toast" role="status" aria-live="polite"></div>
         </div>
         <aside class="game-sidebar">
           <div class="sidebar-section"><div class="sidebar-heading"><span>THE PLAN</span><span>01</span></div><p class="objective-copy">Find the clues.<br />Find the key.<br />Unlock the emergency exit.<br />Escape before midnight.</p><div class="objective-progress"><div class="progress-head"><span>CLUES UNCOVERED</span><strong id="clue-count">0 / 3</strong></div><div class="progress-track"><span id="progress-fill"></span></div></div></div>
-          <div class="sidebar-section clues-section"><div class="sidebar-heading"><span>WHAT WE KNOW</span><span>02</span></div><ul id="clue-list" class="clue-list"><li class="clue-empty">The hotel keeps its secrets.</li></ul></div>
+          <div id="case-file-section" class="sidebar-section clues-section case-file-section">
+            <div class="sidebar-heading"><span>CASE FILE</span><span id="case-file-count">0 / 3 FOUND</span></div>
+            <p class="case-file-intro">Three records. One truth the Meridian tried to bury.</p>
+            <ul id="clue-list" class="clue-list case-file-list" aria-label="Three shared case-file clues"></ul>
+            <div id="case-file-complete" class="case-file-complete hidden" role="status" aria-live="polite">
+              <span class="case-complete-seal" aria-hidden="true">✧</span>
+              <div><strong>CASE FILE COMPLETE</strong><p>The records reveal the Meridian hid a guest in the east wing. Security can now release the brass key, making the emergency exit accessible—retrieve it to open the way out.</p></div>
+            </div>
+          </div>
           <div class="sidebar-section escape-section"><div class="sidebar-heading"><span>THE WAY OUT</span><span>03</span></div><div class="escape-status"><span id="key-status-icon" class="escape-icon">◇</span><div><strong id="key-status">Brass key</strong><small id="exit-status">Still locked</small></div></div><div class="escape-status"><span id="exit-status-icon" class="escape-icon">⌑</span><div><strong>Emergency exit</strong><small id="exit-detail">Down the main hall</small></div></div></div>
           <div class="party-section"><div class="sidebar-heading"><span>YOUR PARTY</span><span id="game-player-count">0 / 8</span></div><ul id="game-player-list" class="game-player-list"></ul></div>
         </aside>
@@ -122,10 +158,20 @@ const actionButton = byId<HTMLButtonElement>("action-button");
 const timer = byId<HTMLElement>("timer");
 const resultOverlay = byId<HTMLElement>("result-overlay");
 const clueList = byId<HTMLUListElement>("clue-list");
+const caseFileCount = byId<HTMLElement>("case-file-count");
+const caseFileSection = byId<HTMLElement>("case-file-section");
+const caseFileComplete = byId<HTMLElement>("case-file-complete");
+const investigationPanel = byId<HTMLElement>("investigation-panel");
+const investigationIndex = byId<HTMLElement>("investigation-index");
+const investigationLocation = byId<HTMLElement>("investigation-location");
+const investigationTitle = byId<HTMLElement>("investigation-title");
+const investigationStory = byId<HTMLElement>("investigation-story");
+const investigationEvidence = byId<HTMLElement>("investigation-evidence");
 const audio = new HotelAudio();
 const audioToggle = byId<HTMLButtonElement>("audio-toggle");
 const openingPrologue = byId<HTMLElement>("opening-prologue");
 let momentTimer = 0;
+let investigationTimer = 0;
 let presentationSnapshot: PresentationSnapshot | null = null;
 
 let activeRoom: GameRoom | null = null;
@@ -133,7 +179,7 @@ let game: Phaser.Game | null = null;
 let scene: HotelSceneType | null = null;
 let toastTimer = 0;
 let lastPhase: Phase | null = null;
-const receivedClues = new Map<string, string>();
+
 
 renderAudioControl();
 audioToggle.addEventListener("click", () => {
@@ -142,6 +188,7 @@ audioToggle.addEventListener("click", () => {
   renderAudioControl();
 });
 byId<HTMLButtonElement>("skip-prologue").addEventListener("click", hidePrologue);
+byId<HTMLButtonElement>("dismiss-investigation").addEventListener("click", hideInvestigation);
 byId<HTMLInputElement>("player-name").value = localStorage.getItem("midnight-player-name") ?? "";
 
 byId<HTMLButtonElement>("create-button").addEventListener("click", () => void createRoom());
@@ -237,7 +284,6 @@ function enterRoom(room: GameRoom): void {
   activeRoom = room;
   lastPhase = null;
   presentationSnapshot = capturePresentation(room.state);
-  receivedClues.clear();
   showPrologue();
   showEntryError("");
   roomCodeDisplay.textContent = room.roomId;
@@ -245,13 +291,13 @@ function enterRoom(room: GameRoom): void {
   room.onMessage("notice", (message: Notice) => showToast(message.text, message.tone));
   room.onMessage("clue", (message: ClueMessage) => {
     if (message.text) {
-      receivedClues.set(message.id, message.text);
-      renderClues();
+      showInvestigation(message.id, message.text);
       audio.playClueFound();
       pulseMoment("clue");
-      const newestClue = clueList.lastElementChild;
-      newestClue?.classList.add("clue-arrival");
-      window.setTimeout(() => newestClue?.classList.remove("clue-arrival"), 1500);
+      const clue = CASE_CLUES.find((entry) => entry.id === message.id);
+      const newEntry = clue ? clueList.querySelector<HTMLElement>('[data-clue-id="' + clue.id + '"]') : null;
+      newEntry?.classList.add("clue-arrival");
+      window.setTimeout(() => newEntry?.classList.remove("clue-arrival"), 1500);
     }
   });
   connectionLabel.textContent = "CONNECTED TO THE MERIDIAN";
@@ -345,30 +391,74 @@ function renderGameStatus(state: GameRoom["state"]): void {
   byId<HTMLElement>("exit-status-icon").classList.toggle("complete", state.exitUnlocked);
   byId<HTMLElement>("key-status-icon").closest(".escape-status")?.classList.toggle("is-complete", state.keyFound);
   byId<HTMLElement>("exit-status-icon").closest(".escape-status")?.classList.toggle("is-complete", state.exitUnlocked);
-  renderClues();
+  renderClues(state);
   if (scene) scene.setRoom(activeRoom, activeRoom?.sessionId ?? "");
 }
 
-function renderClues(): void {
-  const found = [...receivedClues.values()];
-  if (found.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "clue-empty";
-    empty.textContent = "The hotel keeps its secrets.";
-    clueList.replaceChildren(empty);
-    return;
-  }
-  clueList.replaceChildren(...found.map((clue) => {
+function renderClues(state: GameRoom["state"]): void {
+  let foundCount = 0;
+  const entries = CASE_CLUES.map((clue, index) => {
+    const found = state.interactables?.get(clue.id)?.found ?? false;
+    if (found) foundCount += 1;
+
     const item = document.createElement("li");
-    item.className = "clue-item";
+    item.className = "clue-item case-entry" + (found ? " is-found" : "");
+    item.dataset.clueId = clue.id;
+    item.setAttribute("aria-label", clue.title + ": " + (found ? "recovered" : "not yet recovered"));
+
     const marker = document.createElement("span");
-    marker.className = "clue-marker";
-    marker.textContent = "✦";
-    const text = document.createElement("span");
-    text.textContent = clue;
-    item.append(marker, text);
+    marker.className = "clue-marker case-entry-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = found ? "✓" : String(index + 1).padStart(2, "0");
+
+    const copy = document.createElement("div");
+    copy.className = "case-entry-copy";
+    const heading = document.createElement("div");
+    heading.className = "case-entry-heading";
+
+    const title = document.createElement("strong");
+    title.textContent = found ? clue.title : "RECORD " + String(index + 1).padStart(2, "0");
+    const status = document.createElement("span");
+    status.className = "case-entry-status";
+    status.textContent = found ? "RECOVERED" : "SEALED";
+    heading.append(title, status);
+
+    const detail = document.createElement("p");
+    detail.textContent = found ? clue.story : "Evidence not yet recovered.";
+    copy.append(heading, detail);
+    item.append(marker, copy);
     return item;
-  }));
+  });
+
+  const complete = foundCount === CASE_CLUES.length;
+  caseFileCount.textContent = foundCount + " / " + CASE_CLUES.length + " FOUND";
+  caseFileSection.classList.toggle("is-complete", complete);
+  caseFileComplete.classList.toggle("hidden", !complete);
+  clueList.replaceChildren(...entries);
+}
+
+function showInvestigation(clueId: string, evidence: string): void {
+  const clue = CASE_CLUES.find((entry) => entry.id === clueId);
+  if (!clue) return;
+
+  investigationIndex.textContent = "EVIDENCE " + String(CASE_CLUES.indexOf(clue) + 1).padStart(2, "0") + " / 03";
+  investigationLocation.textContent = clue.location;
+  investigationTitle.textContent = clue.title;
+  investigationStory.textContent = clue.story;
+  investigationEvidence.textContent = evidence;
+  investigationPanel.classList.remove("hidden");
+  investigationPanel.classList.remove("is-visible");
+  void investigationPanel.offsetWidth;
+  investigationPanel.classList.add("is-visible");
+
+  window.clearTimeout(investigationTimer);
+  investigationTimer = window.setTimeout(hideInvestigation, 7000);
+}
+
+function hideInvestigation(): void {
+  window.clearTimeout(investigationTimer);
+  investigationPanel.classList.remove("is-visible");
+  investigationPanel.classList.add("hidden");
 }
 
 async function mountGame(): Promise<void> {
@@ -496,8 +586,8 @@ async function leaveRoom(): Promise<void> {
   scene = null;
   lastPhase = null;
   presentationSnapshot = null;
-  receivedClues.clear();
   hidePrologue();
+  hideInvestigation();
   audio.stopAmbience();
   gameScreen.classList.remove("is-final-countdown");
   resultOverlay.classList.add("hidden");
