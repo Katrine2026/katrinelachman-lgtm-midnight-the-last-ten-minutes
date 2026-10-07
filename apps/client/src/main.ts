@@ -178,6 +178,9 @@ let activeRoom: GameRoom | null = null;
 let game: Phaser.Game | null = null;
 let scene: HotelSceneType | null = null;
 let toastTimer = 0;
+let deferredNoticeTimer = 0;
+let clueToastVisibleUntil = 0;
+let pendingClueDiscoverer: string | null = null;
 let lastPhase: Phase | null = null;
 
 
@@ -283,18 +286,46 @@ async function joinRoom(): Promise<void> {
 function enterRoom(room: GameRoom): void {
   activeRoom = room;
   lastPhase = null;
+  pendingClueDiscoverer = null;
+  clueToastVisibleUntil = 0;
+  window.clearTimeout(deferredNoticeTimer);
   presentationSnapshot = capturePresentation(room.state);
   showPrologue();
   showEntryError("");
   roomCodeDisplay.textContent = room.roomId;
   room.onStateChange((state) => syncRoomState(state));
-  room.onMessage("notice", (message: Notice) => showToast(message.text, message.tone));
+  room.onMessage("notice", (message: Notice) => {
+    const discovery = message.text.match(/^(.+?) finds a clue in .+\.$/u);
+    pendingClueDiscoverer = discovery?.[1] ?? null;
+    window.clearTimeout(deferredNoticeTimer);
+
+    const followsThirdClue = message.text === "All three records are found. The security key cabinet is ready.";
+    const discoveryTimeRemaining = clueToastVisibleUntil - Date.now();
+    if (followsThirdClue && discoveryTimeRemaining > 0) {
+      deferredNoticeTimer = window.setTimeout(
+        () => showToast(message.text, message.tone),
+        discoveryTimeRemaining,
+      );
+      return;
+    }
+    showToast(message.text, message.tone);
+  });
   room.onMessage("clue", (message: ClueMessage) => {
     if (message.text) {
+      const discoverer = pendingClueDiscoverer;
+      pendingClueDiscoverer = null;
+      const clue = CASE_CLUES.find((entry) => entry.id === message.id);
+      if (clue) {
+        const localPlayerName = activeRoom?.state.players?.get(activeRoom.sessionId)?.name ?? byId<HTMLInputElement>("player-name").value.trim();
+        const notification = discoverer === localPlayerName && localPlayerName
+          ? `You discovered: ${clue.title}`
+          : `${discoverer ?? "A player"} discovered: ${clue.title}`;
+        showToast(notification, "success");
+        clueToastVisibleUntil = Date.now() + 3600;
+      }
       showInvestigation(message.id, message.text);
       audio.playClueFound();
       pulseMoment("clue");
-      const clue = CASE_CLUES.find((entry) => entry.id === message.id);
       const newEntry = clue ? clueList.querySelector<HTMLElement>('[data-clue-id="' + clue.id + '"]') : null;
       newEntry?.classList.add("clue-arrival");
       window.setTimeout(() => newEntry?.classList.remove("clue-arrival"), 1500);
@@ -583,6 +614,9 @@ function showScreen(screen: "landing" | "lobby" | "game"): void {
 async function leaveRoom(): Promise<void> {
   const oldRoom = activeRoom;
   activeRoom = null;
+  pendingClueDiscoverer = null;
+  clueToastVisibleUntil = 0;
+  window.clearTimeout(deferredNoticeTimer);
   scene = null;
   lastPhase = null;
   presentationSnapshot = null;
