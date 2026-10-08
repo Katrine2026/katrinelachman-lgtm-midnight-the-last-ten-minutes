@@ -420,19 +420,39 @@ h1, h2, h3, p { margin-top: 0; }
 .investigation-proof p { margin: 5px 0 0; color: #e0d5b6; font: italic 11px/1.45 Georgia, serif; }
 .investigation-filed { display: block; margin-top: 10px; color: #788e7f; font: 700 6px ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
 @keyframes investigation-arrive { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); } }
+.clue-inspection-panel { position: absolute; top: 39px; right: 12px; z-index: 29; width: min(390px, calc(100% - 24px)); max-height: min(350px, calc(100vh - 205px)); overflow-y: auto; padding: 17px 19px 16px; border: 1px solid rgba(147,163,194,.58); background: radial-gradient(ellipse at 95% 0, rgba(109,126,172,.19), transparent 55%), linear-gradient(145deg, rgba(24,29,43,.99), rgba(11,15,25,.99)); box-shadow: 0 18px 54px rgba(0,0,0,.62), inset 0 1px rgba(226,228,239,.09); backdrop-filter: blur(9px); }
+.clue-inspection-panel.is-visible { animation: clue-inspection-arrive .32s cubic-bezier(.2,.8,.2,1) both; }
+.inspection-dismiss { position: absolute; top: 7px; right: 8px; display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid rgba(166,177,202,.2); color: #b9bfd0; background: rgba(8,11,18,.58); cursor: pointer; font: 17px/1 Georgia, serif; }
+.inspection-dismiss:hover, .inspection-dismiss:focus-visible { border-color: rgba(176,190,224,.72); color: #eef1ff; }
+.inspection-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 7px; padding-right: 31px; color: #abb6d2; font: 800 7px ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; }
+.inspection-heading span:last-child { color: #7f9a9f; }
+.inspection-seal { display: grid; place-items: center; width: 33px; height: 33px; margin-top: 14px; border: 1px solid rgba(165,181,215,.34); color: #c6c9dc; background: rgba(128,146,187,.08); font: 22px/1 Georgia, serif; }
+.clue-inspection-panel h3 { margin: 10px 0 7px; color: #f0edf4; font: 23px/1.15 Georgia, serif; }
+.inspection-observation { margin: 0; color: #c8c9d2; font: 12px/1.6 Georgia, serif; }
+.inspection-rule { display: flex; align-items: center; gap: 8px; margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(160,173,202,.2); color: #9ea7bd; font: 800 6px ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; }
+.inspection-guidance { margin: 7px 0 0; color: #9299a9; font: italic 10px/1.5 Georgia, serif; }
+.inspection-record { width: 100%; min-height: 40px; margin-top: 13px; padding: 0 12px; color: #181c28; border-color: rgba(189,199,224,.72); background: linear-gradient(110deg, #c9cadd, #aebbc3); font-size: 8px; }
+.inspection-record:hover:not(:disabled) { background: linear-gradient(110deg, #e0def0, #c3d2d6); }
+.inspection-record span { font-size: 14px; }
+@keyframes clue-inspection-arrive { from { opacity: 0; transform: translate(7px, -4px); } to { opacity: 1; transform: translate(0, 0); } }
 @media (max-width: 760px) {
   .case-file-section { grid-column: 1 / -1; }
   .case-file-list { grid-template-columns: 1fr; }
   .investigation-panel { top: 32px; left: 8px; width: calc(100% - 16px); max-height: min(330px, calc(100vh - 175px)); padding: 14px; }
   .investigation-panel h3 { font-size: 20px; }
+  .clue-inspection-panel { top: 32px; left: 8px; right: 8px; width: auto; max-height: min(330px, calc(100vh - 175px)); padding: 14px; }
+  .clue-inspection-panel h3 { font-size: 20px; }
 }
 @media (max-width: 390px) {
   .investigation-panel { top: 27px; left: 6px; width: calc(100% - 12px); max-height: min(300px, calc(100vh - 155px)); padding: 12px; }
   .investigation-story { font-size: 11px; }
+  .clue-inspection-panel { top: 27px; left: 6px; right: 6px; max-height: min(300px, calc(100vh - 155px)); padding: 12px; }
+  .inspection-observation { font-size: 11px; }
   .case-file-complete { gap: 7px; padding: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .investigation-panel.is-visible,
+  .clue-inspection-panel.is-visible,
   .case-entry.clue-arrival,
   .case-file-complete:not(.hidden) { animation: none !important; transition: none !important; }
 }

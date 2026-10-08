@@ -2,7 +2,7 @@ import type Phaser from "phaser";
 import { HotelAudio } from "./hotel-audio.js";
 import { Client, type Room } from "@colyseus/sdk";
 import { MAX_PLAYERS, MIN_PLAYERS } from "@midnight/shared";
-import type { HotelScene as HotelSceneType } from "./hotel-scene.js";
+import type { HotelScene as HotelSceneType, NearbyTarget } from "./hotel-scene.js";
 import "./style.css";
 
 type Phase = "lobby" | "playing" | "won" | "lost";
@@ -32,18 +32,21 @@ const CASE_CLUES = [
     title: "The Guest Ledger",
     location: "ROOM 101 · BLUE SUITE",
     story: "A late-night entry appears forty years after the hotel sealed its doors. Its margin points to the portrait.",
+    inspection: "The final guest is marked as checked out. A second line, in the same hand, records no departure time.",
   },
   {
     id: "dusty-portrait",
     title: "The Portrait Inscription",
     location: "ROOM 102 · VIOLET SUITE",
     story: "The inscription sends the search east, toward what the mirror cannot show.",
+    inspection: "Dust clouds the sitter's face, but the eyes remain clear. They seem fixed on something beyond the eastern wall.",
   },
   {
     id: "maintenance-note",
     title: "The Maintenance Note",
     location: "ROOM 103 · ORCHID SUITE",
     story: "Three records are needed to release the brass key from Security.",
+    inspection: "A pencilled warning runs below the repair log: 'Security keeps the brass key until the records agree.'",
   },
 ] as const;
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -109,6 +112,16 @@ app.innerHTML = `
             <div class="investigation-proof"><span>RECOVERED NOTE</span><p id="investigation-evidence"></p></div>
             <span class="investigation-filed">ADDED TO THE SHARED CASE FILE</span>
           </aside>
+          <aside id="clue-inspection-panel" class="clue-inspection-panel hidden" aria-label="On-site clue inspection" aria-live="polite" aria-atomic="true">
+            <button id="dismiss-clue-inspection" class="inspection-dismiss" type="button" aria-label="Close clue inspection">×</button>
+            <div class="inspection-heading"><span>ON-SITE INSPECTION</span><span id="clue-inspection-location"></span></div>
+            <span class="inspection-seal" aria-hidden="true">⌕</span>
+            <h3 id="clue-inspection-title"></h3>
+            <p id="clue-inspection-observation" class="inspection-observation"></p>
+            <div class="inspection-rule"><span>PRELIMINARY OBSERVATION · NOT YET FILED</span></div>
+            <p class="inspection-guidance">Record this evidence to add it to your party's shared Case File.</p>
+            <button id="record-clue-button" class="button inspection-record" type="button">RECORD EVIDENCE <span aria-hidden="true">↗</span></button>
+          </aside>
           <div class="touch-controls" aria-label="Movement controls"><span class="control-hint">MOVE</span><div class="direction-pad"><button class="direction-button up" data-direction="up" aria-label="Move up">▲</button><button class="direction-button left" data-direction="left" aria-label="Move left">◀</button><button class="direction-button down" data-direction="down" aria-label="Move down">▼</button><button class="direction-button right" data-direction="right" aria-label="Move right">▶</button></div><span class="control-hint">WASD / ARROWS</span><button id="action-button" class="button action-button" disabled>WALK TO A GLOWING OBJECT</button></div>
           <div id="toast" class="toast" role="status" aria-live="polite"></div>
         </div>
@@ -167,11 +180,17 @@ const investigationLocation = byId<HTMLElement>("investigation-location");
 const investigationTitle = byId<HTMLElement>("investigation-title");
 const investigationStory = byId<HTMLElement>("investigation-story");
 const investigationEvidence = byId<HTMLElement>("investigation-evidence");
+const clueInspectionPanel = byId<HTMLElement>("clue-inspection-panel");
+const clueInspectionLocation = byId<HTMLElement>("clue-inspection-location");
+const clueInspectionTitle = byId<HTMLElement>("clue-inspection-title");
+const clueInspectionObservation = byId<HTMLElement>("clue-inspection-observation");
+const recordClueButton = byId<HTMLButtonElement>("record-clue-button");
 const audio = new HotelAudio();
 const audioToggle = byId<HTMLButtonElement>("audio-toggle");
 const openingPrologue = byId<HTMLElement>("opening-prologue");
 let momentTimer = 0;
 let investigationTimer = 0;
+let inspectingClueId: string | null = null;
 let presentationSnapshot: PresentationSnapshot | null = null;
 
 let activeRoom: GameRoom | null = null;
@@ -192,6 +211,14 @@ audioToggle.addEventListener("click", () => {
 });
 byId<HTMLButtonElement>("skip-prologue").addEventListener("click", hidePrologue);
 byId<HTMLButtonElement>("dismiss-investigation").addEventListener("click", hideInvestigation);
+byId<HTMLButtonElement>("dismiss-clue-inspection").addEventListener("click", () => closeClueInspection());
+recordClueButton.addEventListener("click", fileInspectedClue);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !clueInspectionPanel.classList.contains("hidden")) {
+    event.preventDefault();
+    closeClueInspection();
+  }
+});
 byId<HTMLInputElement>("player-name").value = localStorage.getItem("midnight-player-name") ?? "";
 
 byId<HTMLButtonElement>("create-button").addEventListener("click", () => void createRoom());
@@ -207,10 +234,7 @@ startButton.addEventListener("click", () => activeRoom?.send("start-game"));
 byId<HTMLButtonElement>("leave-lobby").addEventListener("click", () => void leaveRoom());
 byId<HTMLButtonElement>("leave-game").addEventListener("click", () => void leaveRoom());
 byId<HTMLButtonElement>("return-home").addEventListener("click", () => void leaveRoom());
-actionButton.addEventListener("click", () => {
-  const target = scene?.getNearbyTarget();
-  if (target && activeRoom) activeRoom.send("interact", { id: target.id });
-});
+actionButton.addEventListener("click", handleNearbyInteraction);
 
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-direction]")) {
   const direction = button.dataset.direction;
@@ -312,6 +336,7 @@ function enterRoom(room: GameRoom): void {
   });
   room.onMessage("clue", (message: ClueMessage) => {
     if (message.text) {
+      closeClueInspection();
       const discoverer = pendingClueDiscoverer;
       pendingClueDiscoverer = null;
       const clue = CASE_CLUES.find((entry) => entry.id === message.id);
@@ -468,6 +493,76 @@ function renderClues(state: GameRoom["state"]): void {
   clueList.replaceChildren(...entries);
 }
 
+function renderNearbyAction(target: NearbyTarget | null): void {
+  const clue = target && CASE_CLUES.find((entry) => entry.id === target.id);
+  const found = clue ? activeRoom?.state.interactables?.get(clue.id)?.found ?? false : false;
+  const verb = clue && !found
+    ? inspectingClueId === clue.id ? "RECORD EVIDENCE" : "INSPECT"
+    : target?.verb ?? "SEARCH";
+  actionButton.disabled = !target || activeRoom?.state.phase !== "playing";
+  actionButton.textContent = target ? `${verb} · ${target.label}` : "WALK TO A GLOWING OBJECT";
+  actionButton.classList.toggle("is-ready", Boolean(target));
+}
+
+function handleNearbyInteraction(): void {
+  const target = scene?.getNearbyTarget();
+  if (!target || !activeRoom) return;
+
+  const clue = CASE_CLUES.find((entry) => entry.id === target.id);
+  const found = clue ? activeRoom.state.interactables?.get(clue.id)?.found ?? false : false;
+  if (!clue || found) {
+    activeRoom.send("interact", { id: target.id });
+    return;
+  }
+
+  if (inspectingClueId === clue.id) {
+    fileInspectedClue();
+    return;
+  }
+
+  inspectingClueId = clue.id;
+  showClueInspection(clue);
+  renderNearbyAction(target);
+}
+
+function showClueInspection(clue: (typeof CASE_CLUES)[number]): void {
+  clueInspectionLocation.textContent = clue.location;
+  clueInspectionTitle.textContent = clue.title;
+  clueInspectionObservation.textContent = clue.inspection;
+  clueInspectionPanel.classList.remove("hidden");
+  clueInspectionPanel.classList.remove("is-visible");
+  void clueInspectionPanel.offsetWidth;
+  clueInspectionPanel.classList.add("is-visible");
+  recordClueButton.focus();
+}
+
+function fileInspectedClue(): void {
+  const clue = CASE_CLUES.find((entry) => entry.id === inspectingClueId);
+  const target = scene?.getNearbyTarget();
+  if (!clue || !activeRoom || target?.id !== clue.id) {
+    closeClueInspection();
+    return;
+  }
+
+  if (activeRoom.state.interactables?.get(clue.id)?.found) {
+    closeClueInspection();
+    return;
+  }
+
+  const room = activeRoom;
+  closeClueInspection();
+  room.send("interact", { id: clue.id });
+}
+
+function closeClueInspection(): void {
+  const hadFocus = clueInspectionPanel.contains(document.activeElement);
+  inspectingClueId = null;
+  clueInspectionPanel.classList.remove("is-visible");
+  clueInspectionPanel.classList.add("hidden");
+  if (hadFocus) actionButton.focus();
+  renderNearbyAction(scene?.getNearbyTarget() ?? null);
+}
+
 function showInvestigation(clueId: string, evidence: string): void {
   const clue = CASE_CLUES.find((entry) => entry.id === clueId);
   if (!clue) return;
@@ -518,9 +613,8 @@ async function mountGame(): Promise<void> {
   scene.setFootstepCallback(() => audio.playFootstep());
   game.scene.add("HotelScene", scene, true);
   scene.onNearbyTargetChange((target) => {
-    actionButton.disabled = !target || activeRoom?.state.phase !== "playing";
-    actionButton.textContent = target ? `${target.verb} · ${target.label}` : "WALK TO A GLOWING OBJECT";
-    actionButton.classList.toggle("is-ready", Boolean(target));
+    if (inspectingClueId && target?.id !== inspectingClueId) closeClueInspection();
+    renderNearbyAction(target);
   });
 }
 
@@ -616,7 +710,10 @@ async function leaveRoom(): Promise<void> {
   activeRoom = null;
   pendingClueDiscoverer = null;
   clueToastVisibleUntil = 0;
+  inspectingClueId = null;
   window.clearTimeout(deferredNoticeTimer);
+  clueInspectionPanel.classList.remove("is-visible");
+  clueInspectionPanel.classList.add("hidden");
   scene = null;
   lastPhase = null;
   presentationSnapshot = null;
