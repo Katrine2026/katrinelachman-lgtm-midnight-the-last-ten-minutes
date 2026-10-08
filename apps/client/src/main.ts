@@ -157,6 +157,14 @@ app.innerHTML = `
     <div id="result-overlay" class="result-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="result-title">
       <div class="result-card"><div id="result-symbol" class="result-symbol">✦</div><p id="result-kicker" class="eyebrow">THE NIGHT IS YOURS</p><h2 id="result-title">YOU ESCAPED</h2><p id="result-copy">Together, you made it out before midnight.</p><div class="result-rule"><span></span>✧<span></span></div><button id="return-home" class="button button-primary"><span>RETURN TO THE LOBBY</span><span class="button-arrow">↗</span></button></div>
     </div>
+    <div id="escape-sequence" class="escape-sequence hidden" role="status" aria-live="polite" aria-atomic="true">
+      <div class="escape-sequence-card">
+        <span class="escape-sequence-kicker">THE FINAL THRESHOLD</span>
+        <h2 id="escape-sequence-title">THE EXIT GIVES</h2>
+        <p id="escape-sequence-copy">The old lock turns. Cold night air spills into the hall.</p>
+        <div class="escape-sequence-rule"><span></span><i aria-hidden="true">✧</i><span></span></div>
+      </div>
+    </div>
     <div id="moment-overlay" class="moment-overlay" aria-hidden="true"></div>
   </main>
 `;
@@ -181,6 +189,9 @@ const gamePlayerList = byId<HTMLUListElement>("game-player-list");
 const actionButton = byId<HTMLButtonElement>("action-button");
 const timer = byId<HTMLElement>("timer");
 const resultOverlay = byId<HTMLElement>("result-overlay");
+const escapeSequence = byId<HTMLElement>("escape-sequence");
+const escapeSequenceTitle = byId<HTMLElement>("escape-sequence-title");
+const escapeSequenceCopy = byId<HTMLElement>("escape-sequence-copy");
 const clueList = byId<HTMLUListElement>("clue-list");
 const caseFileCount = byId<HTMLElement>("case-file-count");
 const caseFileSection = byId<HTMLElement>("case-file-section");
@@ -203,6 +214,11 @@ const audio = new HotelAudio();
 const audioToggle = byId<HTMLButtonElement>("audio-toggle");
 const openingPrologue = byId<HTMLElement>("opening-prologue");
 let momentTimer = 0;
+let escapeSequenceStepTimer = 0;
+let escapeSequenceTimer = 0;
+let finalResultTimer = 0;
+let escapeSequenceEndsAt = 0;
+let displayedResultPhase: "won" | "lost" | null = null;
 let investigationTimer = 0;
 let inspectingClueId: string | null = null;
 let presentationSnapshot: PresentationSnapshot | null = null;
@@ -340,6 +356,7 @@ function enterRoom(room: GameRoom): void {
   room.onStateChange((state) => syncRoomState(state));
   room.onMessage("notice", (message: Notice) => {
     const discovery = message.text.match(/^(.+?) finds a clue in .+\.$/u);
+    const keyDiscovery = message.text.match(/^(.+?) finds the brass emergency key\.$/u);
     pendingClueDiscoverer = discovery?.[1] ?? null;
     window.clearTimeout(deferredNoticeTimer);
 
@@ -352,7 +369,10 @@ function enterRoom(room: GameRoom): void {
       );
       return;
     }
-    showToast(message.text, message.tone);
+    const noticeText = keyDiscovery
+      ? `${keyDiscovery[1]} found the brass key. The final escape is now possible.`
+      : message.text;
+    showToast(noticeText, message.tone);
   });
   room.onMessage("clue", (message: ClueMessage) => {
     if (message.text) {
@@ -408,8 +428,8 @@ function syncRoomState(state: GameRoom["state"]): void {
       showScreen("game");
       mountGame();
     }
-    if (state.phase === "won" || state.phase === "lost") showResult(state.phase);
   }
+  if (state.phase === "won" || state.phase === "lost") queueResult(state.phase);
 }
 
 function renderPlayers(players: GameRoom["state"]["players"] | undefined, localSessionId: string): void {
@@ -461,7 +481,7 @@ function renderGameStatus(state: GameRoom["state"]): void {
   progressFill.style.width = `${Math.min(100, state.cluesFound / 3 * 100)}%`;
   progressFill.closest(".objective-progress")?.classList.toggle("is-complete", state.cluesFound >= 3);
   byId<HTMLElement>("key-status").textContent = state.keyFound ? "Brass key found" : "Brass key";
-  byId<HTMLElement>("exit-status").textContent = state.keyFound ? "The way is open" : "Still locked";
+  byId<HTMLElement>("exit-status").textContent = state.keyFound ? "Escape is possible" : "Still locked";
   byId<HTMLElement>("exit-detail").textContent = state.exitUnlocked ? "Unlocked — make your escape" : "Down the main hall";
   byId<HTMLElement>("key-status-icon").classList.toggle("complete", state.keyFound);
   byId<HTMLElement>("exit-status-icon").classList.toggle("complete", state.exitUnlocked);
@@ -710,19 +730,67 @@ function presentRoomChanges(state: GameRoom["state"]): void {
     audio.playExitUnlocked();
     pulseMoment("exit");
   }
+  const newEscape = state.phase !== "lost"
+    ? [...(state.players?.entries() ?? [])].find(([id, player]) => player.escaped && !previous.escapedPlayers.has(id))
+    : undefined;
+  if (newEscape) {
+    const [, player] = newEscape;
+    audio.playEscape();
+    pulseMoment("escape");
+    showEscapeSequence(player.name);
+  }
+
   if (state.phase === "lost" && previous.phase !== "lost") {
     audio.playTimeout();
     pulseMoment("loss");
-  } else if (state.phase === "won" && previous.phase !== "won") {
-    audio.playWin();
-    pulseMoment("win");
-  } else {
-    const newEscape = [...(state.players?.entries() ?? [])].some(([id, player]) => player.escaped && !previous.escapedPlayers.has(id));
-    if (newEscape) {
-      audio.playEscape();
-      pulseMoment("escape");
-    }
   }
+}
+
+function showEscapeSequence(playerName: string): void {
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const duration = reducedMotion ? 1450 : 2550;
+  window.clearTimeout(escapeSequenceStepTimer);
+  window.clearTimeout(escapeSequenceTimer);
+  escapeSequenceEndsAt = Date.now() + duration;
+  escapeSequence.classList.remove("hidden", "is-second-beat");
+  escapeSequenceTitle.textContent = "THE EXIT GIVES";
+  escapeSequenceCopy.textContent = "The old lock turns. Cold night air spills into the hall.";
+
+  escapeSequenceStepTimer = window.setTimeout(() => {
+    escapeSequenceTitle.textContent = "INTO THE NIGHT";
+    escapeSequenceCopy.textContent = `${playerName} crosses into the fog. The door closes softly behind them.`;
+    escapeSequence.classList.add("is-second-beat");
+  }, reducedMotion ? 420 : 760);
+  escapeSequenceTimer = window.setTimeout(hideEscapeSequence, duration);
+}
+
+function hideEscapeSequence(): void {
+  window.clearTimeout(escapeSequenceStepTimer);
+  window.clearTimeout(escapeSequenceTimer);
+  escapeSequence.classList.add("hidden");
+  escapeSequence.classList.remove("is-second-beat");
+  escapeSequenceEndsAt = 0;
+}
+
+function queueResult(phase: "won" | "lost"): void {
+  if (phase === "lost") {
+    window.clearTimeout(finalResultTimer);
+    finalResultTimer = 0;
+    hideEscapeSequence();
+    showResult("lost");
+    return;
+  }
+
+  if (displayedResultPhase === "won" || finalResultTimer) return;
+  const delay = Math.max(0, escapeSequenceEndsAt - Date.now());
+  if (delay === 0) {
+    showResult("won");
+    return;
+  }
+  finalResultTimer = window.setTimeout(() => {
+    finalResultTimer = 0;
+    if (activeRoom?.state.phase === "won") showResult("won");
+  }, delay);
 }
 
 function showScreen(screen: "landing" | "lobby" | "game"): void {
@@ -738,6 +806,9 @@ async function leaveRoom(): Promise<void> {
   clueToastVisibleUntil = 0;
   inspectingClueId = null;
   window.clearTimeout(deferredNoticeTimer);
+  window.clearTimeout(finalResultTimer);
+  finalResultTimer = 0;
+  hideEscapeSequence();
   clueInspectionPanel.classList.remove("is-visible");
   clueInspectionPanel.classList.add("hidden");
   scene = null;
@@ -748,6 +819,7 @@ async function leaveRoom(): Promise<void> {
   audio.stopAmbience();
   gameScreen.classList.remove("is-final-countdown");
   resultOverlay.classList.add("hidden");
+  displayedResultPhase = null;
   actionButton.disabled = true;
   if (game) {
     game.destroy(true);
@@ -761,16 +833,22 @@ async function leaveRoom(): Promise<void> {
 }
 
 function showResult(phase: "won" | "lost"): void {
+  if (displayedResultPhase === phase) return;
+  displayedResultPhase = phase;
   const won = phase === "won";
   byId<HTMLElement>("result-symbol").textContent = won ? "✦" : "☾";
-  byId<HTMLElement>("result-kicker").textContent = won ? "THE NIGHT IS YOURS" : "THE HOTEL HAS CLAIMED THE HOUR";
-  byId<HTMLElement>("result-title").textContent = won ? "YOU ESCAPED" : "TIME'S UP";
+  byId<HTMLElement>("result-kicker").textContent = won ? "MIDNIGHT: THE LAST TEN MINUTES" : "THE HOTEL HAS CLAIMED THE HOUR";
+  byId<HTMLElement>("result-title").textContent = won ? "CASE CLOSED" : "TIME'S UP";
   byId<HTMLElement>("result-copy").textContent = won
-    ? "Together, you made it out before midnight."
+    ? "You made it out."
     : "The clock reached twelve. The hotel doors have closed.";
   resultOverlay.classList.remove("hidden");
   resultOverlay.classList.toggle("result-win", won);
   resultOverlay.classList.toggle("result-loss", !won);
+  if (won) {
+    audio.playWin();
+    pulseMoment("win");
+  }
 }
 
 function showToast(text: string, tone = "story"): void {

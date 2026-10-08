@@ -471,3 +471,33 @@ h1, h2, h3, p { margin-top: 0; }
   .case-entry.clue-arrival,
   .case-file-complete:not(.hidden) { animation: none !important; transition: none !important; }
 }
+
+/* Shared, state-driven escape finale. */
+.escape-sequence { position: fixed; inset: 0; z-index: 46; display: grid; place-items: center; padding: 20px; background: radial-gradient(ellipse at 50% 43%, rgba(23,39,35,.72), rgba(4,9,11,.82) 72%); pointer-events: none; }
+.escape-sequence-card { width: min(480px, 100%); padding: clamp(23px, 5vw, 42px); border: 1px solid rgba(174,204,177,.48); background: radial-gradient(ellipse at 50% 0, rgba(84,112,91,.28), transparent 58%), linear-gradient(145deg, rgba(19,33,32,.98), rgba(8,16,18,.98)); text-align: center; box-shadow: 0 26px 90px rgba(0,0,0,.58), inset 0 1px rgba(233,239,209,.1), 0 0 44px rgba(130,177,147,.1); animation: escape-card-arrive .46s cubic-bezier(.2,.8,.2,1) both; }
+.escape-sequence-kicker { color: #b9c9a6; font: 800 8px/1.5 ui-sans-serif, system-ui, sans-serif; letter-spacing: .2em; }
+.escape-sequence-card h2 { margin: 13px 0 0; color: #f0eadb; font: 400 clamp(27px, 7vw, 43px)/1.08 Georgia, serif; letter-spacing: -.025em; }
+.escape-sequence-card p { max-width: 350px; min-height: 3em; margin: 13px auto 0; color: #c4cbbd; font: 13px/1.65 Georgia, serif; }
+.escape-sequence-rule { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 21px; color: #c6b883; font-size: 11px; }
+.escape-sequence-rule span { width: 42px; height: 1px; background: linear-gradient(90deg, transparent, rgba(198,184,131,.55)); }
+.escape-sequence-rule span:last-child { transform: rotate(180deg); }
+.escape-sequence-rule i { font-style: normal; }
+.escape-sequence.is-second-beat .escape-sequence-card h2,
+.escape-sequence.is-second-beat .escape-sequence-card p { animation: escape-copy-arrive .36s ease both; }
+.escape-sequence.is-second-beat .escape-sequence-card h2 { animation-delay: .02s; }
+.result-win .result-kicker { max-width: 100%; margin: 0 auto 13px; color: #bdcaa9; font-size: clamp(7px, 1.8vw, 9px); line-height: 1.6; letter-spacing: .18em; }
+.result-win .result-card h2 { color: #f0eadb; font-size: clamp(38px, 9vw, 61px); letter-spacing: -.025em; }
+.result-win .result-copy { color: #c3cbbd; font-size: 15px; }
+@keyframes escape-card-arrive { from { opacity: 0; transform: translateY(9px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes escape-copy-arrive { from { opacity: .28; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 390px) {
+  .escape-sequence { padding: 14px; }
+  .escape-sequence-card { padding: 23px 18px; }
+  .escape-sequence-card p { font-size: 12px; }
+  .result-win .result-card { padding: 32px 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .escape-sequence-card,
+  .escape-sequence.is-second-beat .escape-sequence-card h2,
+  .escape-sequence.is-second-beat .escape-sequence-card p { animation: none !important; }
+}
