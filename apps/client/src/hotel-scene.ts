@@ -19,6 +19,7 @@ interface SceneRoom {
   state: {
     phase: string;
     cluesFound: number;
+    deductionSolved: boolean;
     exitUnlocked: boolean;
     players: Map<string, PlayerView>;
     interactables: Map<string, { found: boolean }>;
@@ -542,7 +543,7 @@ export class HotelScene extends Phaser.Scene {
       const found = this.room.state.interactables.get(id)?.found ?? false;
       const isExit = id === EXIT.id;
       const unlocked = isExit && this.room.state.exitUnlocked;
-      const keyLocked = id === "security-cabinet" && this.room.state.cluesFound < 3 && !found;
+      const keyLocked = id === "security-cabinet" && !this.room.state.deductionSolved && !found;
       const visible = !found || unlocked;
       marker.glow.setVisible(visible);
       marker.ring.setVisible(visible);
@@ -599,7 +600,7 @@ export class HotelScene extends Phaser.Scene {
         closest = {
           id: object.id,
           label: object.label,
-          verb: object.kind === "key" ? "SEARCH" : "SEARCH",
+          verb: object.kind === "key" && !this.room.state.deductionSolved ? "LOCKED" : "SEARCH",
         };
       }
     }

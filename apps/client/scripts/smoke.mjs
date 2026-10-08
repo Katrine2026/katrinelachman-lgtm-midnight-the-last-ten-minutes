@@ -9,8 +9,8 @@ function clientAt(url) {
   return new Client(url);
 }
 
-function consumeRoomNotices(room) {
-  room.onMessage("notice", () => {});
+function consumeRoomNotices(room, onNotice = () => {}) {
+  room.onMessage("notice", onNotice);
   room.onMessage("clue", () => {});
 }
 
@@ -89,15 +89,17 @@ async function checkCapacity() {
 async function checkWinFlow() {
   const hostClient = clientAt(gameUrl);
   const guestClient = clientAt(gameUrl);
+  const hostNotices = [];
+  const guestNotices = [];
   let hostRoom;
   let guestRoom;
 
   try {
     hostRoom = await hostClient.create("midnight", { name: "Ada" });
-    consumeRoomNotices(hostRoom);
+    consumeRoomNotices(hostRoom, (message) => hostNotices.push(message.text));
     const code = hostRoom.roomId;
     guestRoom = await guestClient.joinById(code, { name: "Bryn" });
-    consumeRoomNotices(guestRoom);
+    consumeRoomNotices(guestRoom, (message) => guestNotices.push(message.text));
     await waitUntil("both players to appear in the lobby", () => hostRoom.state.players.size === 2);
     assert.equal(guestRoom.roomId, code, "A guest can join from the shared six-character room code");
     assert.equal(hostRoom.state.players.size, 2, "Room membership synchronizes to both clients");
@@ -142,6 +144,26 @@ async function checkWinFlow() {
     await waitUntil("all three clues to synchronize", () => guestRoom.state.cluesFound === 3);
 
     await walkTo(hostRoom, hostRoom.sessionId, [{ x: 690, y: 320 }, { x: 890, y: 320 }, { x: 890, y: 165 }]);
+    hostRoom.send("interact", { id: "security-cabinet" });
+    await delay(150);
+    assert.equal(hostRoom.state.keyFound, false, "Three clues alone do not release the key");
+    assert.ok(hostNotices.includes("The cabinet stays sealed until the deduction is confirmed."),
+      "The cabinet explains that the shared deduction is still required");
+
+    guestRoom.send("deduction", { answer: "sequence-b" });
+    const wrongAnswerNotice = "Not quite — re-examine the evidence.";
+    await waitUntil("the wrong-answer notice to reach both clients", () =>
+      hostNotices.includes(wrongAnswerNotice) && guestNotices.includes(wrongAnswerNotice));
+    assert.equal(hostRoom.state.deductionSolved, false, "A wrong answer does not unlock progression");
+    assert.equal(guestRoom.state.keyFound, false, "The key stays locked after a wrong answer");
+
+    guestRoom.send("deduction", { answer: "sequence-a" });
+    await waitUntil("the correct deduction to synchronize", () =>
+      hostRoom.state.deductionSolved && guestRoom.state.deductionSolved);
+    const confirmedNotice = "DEDUCTION CONFIRMED. The brass key is ready in Security.";
+    assert.ok(hostNotices.includes(confirmedNotice), "The host receives the shared confirmation");
+    assert.ok(guestNotices.includes(confirmedNotice), "The guest receives the shared confirmation");
+
     hostRoom.send("interact", { id: "security-cabinet" });
     await waitUntil("the security key to synchronize", () => guestRoom.state.keyFound);
     assert.equal(guestRoom.state.keyFound, true, "Key objective is shared room state");
@@ -190,6 +212,6 @@ async function checkTimeoutFlow() {
 await checkCapacity();
 console.log("✓ Room code, eight-player capacity, and ninth-player rejection");
 const win = await checkWinFlow();
-console.log(`✓ Two-client lobby, timer, movement, searches, key, exit, and WIN (${win.code}; ${win.duration}s timer)`);
+console.log(`✓ Two-client lobby, timer, movement, clues, deduction retries, key, exit, and WIN (${win.code}; ${win.duration}s timer)`);
 await checkTimeoutFlow();
 console.log("✓ Short test-only timer and synchronized TIME'S UP state");

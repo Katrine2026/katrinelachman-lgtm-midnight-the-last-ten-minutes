@@ -19,6 +19,7 @@ export class MidnightState extends Schema {
   @type("string") hostSessionId = "";
   @type("number") remainingSeconds = 600;
   @type("number") cluesFound = 0;
+  @type("boolean") deductionSolved = false;
   @type("boolean") keyFound = false;
   @type("boolean") exitUnlocked = false;
 }

@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import { Room, type Client } from "@colyseus/core";
 import {
   DEFAULT_GAME_DURATION_SECONDS,
+  DEDUCTION_CHOICES,
   EXIT,
   INTERACTION_RADIUS,
   MAX_PLAYERS,
@@ -17,6 +18,7 @@ const ROOM_CODE_CHARACTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PLAYER_COLORS = [0xe6c987, 0x87cbd0, 0xc4a1df, 0xefa492, 0x9dc78e, 0xd49cb9, 0x91a8df, 0xd3c28d];
 const WALK_SPEED = 190;
 const ROOM_CODE_CHANNEL = "$midnight-room-codes";
+const CORRECT_DEDUCTION_ANSWER = "sequence-a";
 
 interface MoveInput {
   up?: boolean;
@@ -27,6 +29,10 @@ interface MoveInput {
 
 interface InteractInput {
   id?: string;
+}
+
+interface DeductionInput {
+  answer?: string;
 }
 
 function distance(x1: number, y1: number, x2: number, y2: number): number {
@@ -74,6 +80,7 @@ export class MidnightRoom extends Room<{ state: MidnightState }> {
 
     this.onMessage<MoveInput>("move", (client, input) => this.receiveMovement(client, input));
     this.onMessage<InteractInput>("interact", (client, input) => this.interact(client, input));
+    this.onMessage<DeductionInput>("deduction", (client, input) => this.submitDeduction(client, input));
     this.onMessage("start-game", (client) => this.startGame(client));
   }
 
@@ -254,7 +261,7 @@ export class MidnightRoom extends Room<{ state: MidnightState }> {
       this.broadcast("notice", { text: `${player.name} finds a clue in ${object.room}.`, tone: "success" });
       this.broadcast("clue", { id: object.id, text: object.clue });
       if (this.state.cluesFound === SEARCHABLE_OBJECTS.filter((item) => item.kind === "clue").length) {
-        this.broadcast("notice", { text: "All three records are found. The security key cabinet is ready.", tone: "success" });
+        this.broadcast("notice", { text: "All three records are found. The deduction is ready in the Case File.", tone: "success" });
       }
       return;
     }
@@ -264,10 +271,43 @@ export class MidnightRoom extends Room<{ state: MidnightState }> {
       this.sendNotice(client, `The cabinet will not open. Find all ${clueCount} clues first.`, "warning");
       return;
     }
+    if (!this.state.deductionSolved) {
+      this.sendNotice(client, "The cabinet stays sealed until the deduction is confirmed.", "warning");
+      return;
+    }
 
     itemState.found = true;
     this.state.keyFound = true;
     this.broadcast("notice", { text: `${player.name} finds the brass emergency key.`, tone: "success" });
+  }
+
+  private submitDeduction(client: Client, input: DeductionInput): void {
+    if (this.state.phase !== "playing") {
+      this.sendNotice(client, "The deduction is available once the night begins.", "warning");
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.escaped || this.state.deductionSolved) return;
+
+    const clueCount = SEARCHABLE_OBJECTS.filter((item) => item.kind === "clue").length;
+    if (this.state.cluesFound < clueCount) {
+      this.sendNotice(client, "Recover all three records before making the deduction.", "warning");
+      return;
+    }
+
+    const answer = typeof input?.answer === "string" ? input.answer : "";
+    if (!DEDUCTION_CHOICES.some((choice) => choice.id === answer)) {
+      this.sendNotice(client, "Choose one of the Case File deductions.", "warning");
+      return;
+    }
+    if (answer !== CORRECT_DEDUCTION_ANSWER) {
+      this.broadcast("notice", { text: "Not quite — re-examine the evidence.", tone: "warning" });
+      return;
+    }
+
+    this.state.deductionSolved = true;
+    this.broadcast("notice", { text: "DEDUCTION CONFIRMED. The brass key is ready in Security.", tone: "success" });
   }
 
   private finishIfEveryoneEscaped(): void {

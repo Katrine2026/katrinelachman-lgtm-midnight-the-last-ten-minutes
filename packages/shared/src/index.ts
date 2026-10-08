@@ -1,6 +1,12 @@
 export const GAME_TITLE = "MIDNIGHT: THE LAST TEN MINUTES";
 export const OBJECTIVE_COPY = "Find the clues.\nFind the key.\nUnlock the emergency exit.\nEscape before midnight.";
 export const DEFAULT_GAME_DURATION_SECONDS = 10 * 60;
+
+export const DEDUCTION_CHOICES = [
+  { id: "sequence-a", text: "The ledger points to the portrait; its inscription points east; all three records release Security's key." },
+  { id: "sequence-b", text: "The ledger points to Security; the portrait marks the exit; one record releases the key." },
+  { id: "sequence-c", text: "The inscription points back to the lobby; the maintenance note says the exit is already unlocked." },
+] as const;
 export const MAX_PLAYERS = 8;
 export const MIN_PLAYERS = 2;
 export const INTERACTION_RADIUS = 76;

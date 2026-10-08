@@ -1,7 +1,7 @@
 import type Phaser from "phaser";
 import { HotelAudio } from "./hotel-audio.js";
 import { Client, type Room } from "@colyseus/sdk";
-import { MAX_PLAYERS, MIN_PLAYERS } from "@midnight/shared";
+import { DEDUCTION_CHOICES, MAX_PLAYERS, MIN_PLAYERS } from "@midnight/shared";
 import type { HotelScene as HotelSceneType, NearbyTarget } from "./hotel-scene.js";
 import "./style.css";
 
@@ -16,6 +16,7 @@ type GameRoom = Room & {
     hostSessionId: string;
     remainingSeconds: number;
     cluesFound: number;
+    deductionSolved: boolean;
     keyFound: boolean;
     exitUnlocked: boolean;
     players: Map<string, { name: string; x: number; y: number; color: number; escaped: boolean }>;
@@ -49,6 +50,10 @@ const CASE_CLUES = [
     inspection: "A pencilled warning runs below the repair log: 'Security keeps the brass key until the records agree.'",
   },
 ] as const;
+const deductionChoicesMarkup = DEDUCTION_CHOICES.map((choice, index) => {
+  const label = String.fromCharCode(65 + index);
+  return `<button class="deduction-choice" type="button" data-deduction-answer="${choice.id}" aria-label="Option ${label}: ${choice.text}"><span class="deduction-choice-marker">${label}</span><span>${choice.text}</span></button>`;
+}).join("");
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("The MIDNIGHT game container is missing.");
 
@@ -133,8 +138,14 @@ app.innerHTML = `
             <ul id="clue-list" class="clue-list case-file-list" aria-label="Three shared case-file clues"></ul>
             <div id="case-file-complete" class="case-file-complete hidden" role="status" aria-live="polite">
               <span class="case-complete-seal" aria-hidden="true">✧</span>
-              <div><strong>CASE FILE COMPLETE</strong><p>The records reveal the Meridian hid a guest in the east wing. Security can now release the brass key, making the emergency exit accessible—retrieve it to open the way out.</p></div>
+              <div><strong>CASE FILE COMPLETE</strong><p>The records reveal the Meridian hid a guest in the east wing. One final deduction stands between your party and Security's brass key.</p></div>
             </div>
+            <section id="deduction-section" class="deduction-section hidden" aria-labelledby="deduction-title">
+              <div class="deduction-heading"><span class="deduction-seal" aria-hidden="true">∴</span><div><span class="deduction-kicker">THE FINAL INFERENCE</span><h3 id="deduction-title">DEDUCTION</h3></div></div>
+              <p class="deduction-question">Which chain of evidence is supported by all three records?</p>
+              <div id="deduction-choices" class="deduction-choices" role="group" aria-label="Choose the deduction">${deductionChoicesMarkup}</div>
+              <div id="deduction-confirmed" class="deduction-confirmed hidden" role="status" aria-live="polite"><span class="deduction-confirmed-mark" aria-hidden="true">✧</span><div><strong>DEDUCTION CONFIRMED</strong><p>The evidence points east. Security's brass key is now available to your party.</p></div></div>
+            </section>
           </div>
           <div class="sidebar-section escape-section"><div class="sidebar-heading"><span>THE WAY OUT</span><span>03</span></div><div class="escape-status"><span id="key-status-icon" class="escape-icon">◇</span><div><strong id="key-status">Brass key</strong><small id="exit-status">Still locked</small></div></div><div class="escape-status"><span id="exit-status-icon" class="escape-icon">⌑</span><div><strong>Emergency exit</strong><small id="exit-detail">Down the main hall</small></div></div></div>
           <div class="party-section"><div class="sidebar-heading"><span>YOUR PARTY</span><span id="game-player-count">0 / 8</span></div><ul id="game-player-list" class="game-player-list"></ul></div>
@@ -174,6 +185,9 @@ const clueList = byId<HTMLUListElement>("clue-list");
 const caseFileCount = byId<HTMLElement>("case-file-count");
 const caseFileSection = byId<HTMLElement>("case-file-section");
 const caseFileComplete = byId<HTMLElement>("case-file-complete");
+const deductionSection = byId<HTMLElement>("deduction-section");
+const deductionChoices = byId<HTMLElement>("deduction-choices");
+const deductionConfirmed = byId<HTMLElement>("deduction-confirmed");
 const investigationPanel = byId<HTMLElement>("investigation-panel");
 const investigationIndex = byId<HTMLElement>("investigation-index");
 const investigationLocation = byId<HTMLElement>("investigation-location");
@@ -213,6 +227,12 @@ byId<HTMLButtonElement>("skip-prologue").addEventListener("click", hidePrologue)
 byId<HTMLButtonElement>("dismiss-investigation").addEventListener("click", hideInvestigation);
 byId<HTMLButtonElement>("dismiss-clue-inspection").addEventListener("click", () => closeClueInspection());
 recordClueButton.addEventListener("click", fileInspectedClue);
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-deduction-answer]")) {
+  button.addEventListener("click", () => {
+    const answer = button.dataset.deductionAnswer;
+    if (answer && activeRoom) activeRoom.send("deduction", { answer });
+  });
+}
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !clueInspectionPanel.classList.contains("hidden")) {
     event.preventDefault();
@@ -323,7 +343,7 @@ function enterRoom(room: GameRoom): void {
     pendingClueDiscoverer = discovery?.[1] ?? null;
     window.clearTimeout(deferredNoticeTimer);
 
-    const followsThirdClue = message.text === "All three records are found. The security key cabinet is ready.";
+    const followsThirdClue = message.text === "All three records are found. The deduction is ready in the Case File.";
     const discoveryTimeRemaining = clueToastVisibleUntil - Date.now();
     if (followsThirdClue && discoveryTimeRemaining > 0) {
       deferredNoticeTimer = window.setTimeout(
@@ -490,6 +510,12 @@ function renderClues(state: GameRoom["state"]): void {
   caseFileCount.textContent = foundCount + " / " + CASE_CLUES.length + " FOUND";
   caseFileSection.classList.toggle("is-complete", complete);
   caseFileComplete.classList.toggle("hidden", !complete);
+  deductionSection.classList.toggle("hidden", !complete);
+  deductionChoices.classList.toggle("hidden", state.deductionSolved);
+  deductionConfirmed.classList.toggle("hidden", !state.deductionSolved);
+  for (const button of deductionChoices.querySelectorAll<HTMLButtonElement>("[data-deduction-answer]")) {
+    button.disabled = state.deductionSolved || state.phase !== "playing";
+  }
   clueList.replaceChildren(...entries);
 }
 
